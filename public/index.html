@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Adaptive Streaming Prototype</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .container { background-color: white; padding: 2rem 3rem; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.1); text-align: center; width: 90%; max-width: 650px; }
+        h1 { color: #1c1e21; margin-bottom: 1.5rem; }
+        input[type="file"] { border: 1px solid #ddd; padding: 10px; border-radius: 6px; width: 100%; box-sizing: border-box; }
+        button { background-color: #1877f2; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background-color 0.3s; margin-top: 1rem; }
+        button:hover { background-color: #166fe5; }
+        button:disabled { background-color: #a0a0a0; cursor: not-allowed; }
+        #status { margin-top: 1.5rem; color: #65676b; font-size: 14px; min-height: 20px; }
+        video { margin-top: 1.5rem; border: 1px solid #ddd; border-radius: 8px; max-width: 100%; background-color: black; }
+    </style>
+    <!-- Include hls.js for HLS playback in non-Safari browsers -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+
+<div class="container">
+    <h1>Multi-Bitrate HLS Streaming</h1>
+    <input type="file" id="videoFile" accept="video/*">
+    <button id="uploadButton">Upload and Process Video</button>
+    <div id="status">Please select a video file to begin.</div>
+
+    <video id="videoPlayer" controls style="display: none;"></video>
+    <select id="qualitySelector" style="display:none; margin-top: 1rem;">
+    <option value="auto">Auto (Adaptive)</option>
+    </select>
+</div>
+
+<script>
+    const videoFileInput = document.getElementById('videoFile');
+    const uploadButton = document.getElementById('uploadButton');
+    const statusDiv = document.getElementById('status');
+    const videoPlayer = document.getElementById('videoPlayer');
+    const qualitySelector = document.getElementById('qualitySelector');
+
+
+    uploadButton.addEventListener('click', async () => {
+        const file = videoFileInput.files[0];
+        if (!file) {
+            statusDiv.textContent = 'Please select a file first!';
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('video', file);
+
+        statusDiv.textContent = 'Uploading and processing... This may take a several minutes depending on video length.';
+        uploadButton.disabled = true;
+
+        try {
+            const response = await fetch('http://localhost:3000/upload', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Upload failed.');
+            }
+
+            const data = await response.json();
+            statusDiv.textContent = data.message;
+            
+            // The backend now returns 'playlisturl'
+            const playlistUrl = data.playlisturl;
+            videoPlayer.style.display = 'block';
+            qualitySelector.style.display = 'block';
+
+            // Use hls.js to handle the adaptive streaming manifest
+            if (Hls.isSupported()) {
+                const hls = new Hls();
+                hls.loadSource(playlistUrl);
+                hls.attachMedia(videoPlayer);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+
+                     const levels = hls.levels;
+
+                    // Clear old options
+                    qualitySelector.innerHTML = '<option value="auto">Auto (Adaptive)</option>';
+
+                    // Add all quality levels (sorted by resolution)
+                    levels.forEach((level, index) => {
+                        const option = document.createElement('option');
+                        option.value = index;
+                        option.textContent = `${level.height}p`;
+                        qualitySelector.appendChild(option);
+                    });
+
+
+
+
+                    videoPlayer.play();
+                });
+
+                qualitySelector.addEventListener('change', () => {
+                    const value = qualitySelector.value;
+                    if (value === 'auto') {
+                        hls.currentLevel = -1; // Let HLS auto-select
+                    } else {
+                        hls.currentLevel = parseInt(value);
+                    }
+                });
+            } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+                // Native support for HLS (e.g., Safari)
+                videoPlayer.src = playlistUrl;
+                videoPlayer.addEventListener('loadedmetadata', () => {
+                    videoPlayer.play();
+                });
+            }
+
+        } catch (error) {
+            console.error('Error:', error);
+            statusDiv.textContent = `An error occurred: ${error.message}`;
+        } finally {
+            uploadButton.disabled = false;
+        }
+    });
+</script>
+
+</body>
+</html>
+
